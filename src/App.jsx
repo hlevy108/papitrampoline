@@ -53,13 +53,16 @@ function App() {
       skyColor: '#6ec5ff',
       ballColor: '#ff66b3',
       enemySpawnMs: 2000,
-      stompBounceMultiplier: 0.8,
+      stompBounceMultiplier: 1,
       enemyTypes: {
         onion: { speed: 3.2, radiusRatio: 1.1, groundLift: 0 },
         pepper: { speed: 7.2, radiusRatio: 1.12, groundLift: 0.08 },
+        carrot: { speed: 2.6, radiusRatio: 1.06, groundLift: 3.0 },
       },
       pepperSpawnChance: 0.35,
       pepperUnlockScore: 500,
+      carrotUnlockScore: 2000,
+      carrotSpawnWeights: { onion: 0.5, carrot: 0.25, pepper: 0.25 },
     }
 
     const resetGameState = () => {
@@ -84,7 +87,21 @@ function App() {
       const fromLeft = Math.random() < 0.5
       const direction = fromLeft ? 1 : -1
       const pepperEligible = state.score >= settings.pepperUnlockScore
-      const type = pepperEligible && Math.random() < settings.pepperSpawnChance ? 'pepper' : 'onion'
+      const carrotEligible = state.score >= settings.carrotUnlockScore
+
+      const chooseType = () => {
+        if (carrotEligible) {
+          const { onion, carrot, pepper } = settings.carrotSpawnWeights
+          const roll = Math.random()
+          if (roll < onion) return 'onion'
+          if (roll < onion + carrot) return 'carrot'
+          return pepperEligible ? 'pepper' : 'onion'
+        }
+        if (pepperEligible && Math.random() < settings.pepperSpawnChance) return 'pepper'
+        return 'onion'
+      }
+
+      const type = chooseType()
       const spec = settings.enemyTypes[type] ?? settings.enemyTypes.onion
       const radius = state.ball.radius * spec.radiusRatio
       const x = fromLeft ? -radius * 1.2 : state.width + radius * 1.2
@@ -211,6 +228,65 @@ function App() {
       ctx.restore()
     }
 
+    const drawCarrot = (enemy) => {
+      const ctx = ctxRef.current
+      if (!ctx) return
+      ctx.save()
+      ctx.translate(enemy.x, enemy.y)
+
+      const r = enemy.radius
+      const wobble = enemy.falling ? Math.sin(enemy.y * 0.06) * 0.14 : 0
+      ctx.rotate(wobble)
+
+      const facing = enemy.vx >= 0 ? 1 : -1
+      ctx.scale(facing, 1)
+
+      const bodyWidth = r * 1.9
+      const bodyHeight = r * 0.9
+
+      ctx.beginPath()
+      ctx.moveTo(-bodyWidth * 0.95, -bodyHeight * 0.55)
+      ctx.quadraticCurveTo(-bodyWidth * 0.6, -bodyHeight * 0.7, -bodyWidth * 0.25, -bodyHeight * 0.5)
+      ctx.quadraticCurveTo(bodyWidth * 0.45, -bodyHeight * 0.65, bodyWidth * 0.95, 0)
+      ctx.quadraticCurveTo(bodyWidth * 0.45, bodyHeight * 0.65, -bodyWidth * 0.25, bodyHeight * 0.5)
+      ctx.quadraticCurveTo(-bodyWidth * 0.6, bodyHeight * 0.7, -bodyWidth * 0.95, bodyHeight * 0.55)
+      ctx.closePath()
+      ctx.fillStyle = '#f97316'
+      ctx.strokeStyle = '#ea580c'
+      ctx.lineWidth = Math.max(2, r * 0.12)
+      ctx.fill()
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.moveTo(-bodyWidth * 0.55, -bodyHeight * 0.25)
+      ctx.quadraticCurveTo(-bodyWidth * 0.35, -bodyHeight * 0.05, -bodyWidth * 0.2, 0)
+      ctx.moveTo(-bodyWidth * 0.45, bodyHeight * 0.1)
+      ctx.quadraticCurveTo(-bodyWidth * 0.3, bodyHeight * 0.25, -bodyWidth * 0.12, bodyHeight * 0.3)
+      ctx.strokeStyle = 'rgba(255,255,255,0.28)'
+      ctx.lineWidth = Math.max(1.4, r * 0.05)
+      ctx.stroke()
+
+      const eyeOffsetX = -bodyWidth * 0.05
+      const eyeOffsetY = bodyHeight * 0.05
+      const eyeRadius = Math.max(2.5, r * 0.14)
+      ctx.fillStyle = '#0f172a'
+      ctx.beginPath()
+      ctx.arc(eyeOffsetX - eyeRadius * 1.2, eyeOffsetY, eyeRadius, 0, Math.PI * 2)
+      ctx.arc(eyeOffsetX + eyeRadius * 1.2, eyeOffsetY, eyeRadius, 0, Math.PI * 2)
+      ctx.fill()
+
+      ctx.beginPath()
+      ctx.strokeStyle = '#0f172a'
+      ctx.lineWidth = Math.max(2, r * 0.09)
+      ctx.moveTo(eyeOffsetX - eyeRadius * 1.8, eyeOffsetY - eyeRadius * 1.4)
+      ctx.lineTo(eyeOffsetX - eyeRadius * 0.6, eyeOffsetY - eyeRadius * 0.3)
+      ctx.moveTo(eyeOffsetX + eyeRadius * 1.8, eyeOffsetY - eyeRadius * 1.4)
+      ctx.lineTo(eyeOffsetX + eyeRadius * 0.6, eyeOffsetY - eyeRadius * 0.3)
+      ctx.stroke()
+
+      ctx.restore()
+    }
+
     const renderScene = () => {
       const state = stateRef.current
       if (!state || !ctxRef.current) return
@@ -224,11 +300,9 @@ function App() {
       ctxRef.current.fillRect(0, floorY, state.width, state.floorHeight)
 
       state.enemies.forEach((enemy) => {
-        if (enemy.type === 'pepper') {
-          drawPepper(enemy)
-        } else {
-          drawOnion(enemy)
-        }
+        if (enemy.type === 'pepper') return drawPepper(enemy)
+        if (enemy.type === 'carrot') return drawCarrot(enemy)
+        return drawOnion(enemy)
       })
 
       ctxRef.current.beginPath()
@@ -370,8 +444,8 @@ function App() {
         const onionTop = enemy.y - enemy.radius
         const prevBallBottom = prevBallY + ball.radius
         const ballBottom = ball.y + ball.radius
-        const verticalBandDepth = enemy.radius * 0.5 // top quarter of the onion (0.25 * diameter = 0.5r)
-        const horizontalLeniency = enemy.radius * 1.05 // allow full width (with tiny tolerance) for corner grazes
+        const verticalBandDepth = enemy.type === 'carrot' ? enemy.radius * 1.2 : enemy.radius * 0.5
+        const horizontalLeniency = enemy.type === 'carrot' ? enemy.radius * 1.6 : enemy.radius * 1.05
         const withinTopLane = Math.abs(dx) <= horizontalLeniency
         const crossesTopBand =
           ball.vy > 0 && prevBallBottom <= onionTop + verticalBandDepth && ballBottom >= onionTop - 2
@@ -386,7 +460,7 @@ function App() {
           state.grounded = false
 
           const combo = state.comboChain + 1
-          const basePoints = enemy.type === 'pepper' ? 200 : 100
+          const basePoints = enemy.type === 'pepper' ? 130 : 100
           const points = combo * basePoints
           state.comboChain = combo
           state.score += points
