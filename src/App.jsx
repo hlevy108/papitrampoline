@@ -53,9 +53,13 @@ function App() {
       skyColor: '#6ec5ff',
       ballColor: '#ff66b3',
       enemySpawnMs: 2000,
-      enemySpeed: 3.2,
-      enemyRadiusRatio: 1.1,
       stompBounceMultiplier: 0.8,
+      enemyTypes: {
+        onion: { speed: 3.2, radiusRatio: 1.1, groundLift: 0 },
+        pepper: { speed: 7.2, radiusRatio: 1.12, groundLift: 0.08 },
+      },
+      pepperSpawnChance: 0.35,
+      pepperUnlockScore: 500,
     }
 
     const resetGameState = () => {
@@ -77,18 +81,24 @@ function App() {
 
     const spawnEnemy = () => {
       const floorY = state.height - state.floorHeight
-      const radius = state.ball.radius * settings.enemyRadiusRatio
       const fromLeft = Math.random() < 0.5
-      const x = fromLeft ? -radius * 1.2 : state.width + radius * 1.2
       const direction = fromLeft ? 1 : -1
+      const pepperEligible = state.score >= settings.pepperUnlockScore
+      const type = pepperEligible && Math.random() < settings.pepperSpawnChance ? 'pepper' : 'onion'
+      const spec = settings.enemyTypes[type] ?? settings.enemyTypes.onion
+      const radius = state.ball.radius * spec.radiusRatio
+      const x = fromLeft ? -radius * 1.2 : state.width + radius * 1.2
+      const groundOffset = spec.groundLift * radius
       state.enemies.push({
+        type,
         x,
-        y: floorY - radius,
+        y: floorY - radius - groundOffset,
         radius,
-        vx: settings.enemySpeed * direction,
+        vx: spec.speed * direction,
         vy: 0,
         alive: true,
         falling: false,
+        groundOffset,
       })
     }
 
@@ -138,6 +148,69 @@ function App() {
       ctx.restore()
     }
 
+    const drawPepper = (enemy) => {
+      const ctx = ctxRef.current
+      if (!ctx) return
+      ctx.save()
+      ctx.translate(enemy.x, enemy.y)
+
+      const r = enemy.radius
+      const wobble = enemy.falling ? Math.sin(enemy.y * 0.08) * 0.12 : 0
+      ctx.rotate(wobble)
+
+      const bodyWidth = r * 1.7 // much wider, pumpkin-like
+      const bodyHeight = r * 1.12 // roughly same height as onion
+      const lobe = bodyWidth * 0.22
+
+      ctx.beginPath()
+      ctx.moveTo(-bodyWidth * 0.45, -bodyHeight * 0.4)
+      ctx.quadraticCurveTo(-bodyWidth * 0.7, -bodyHeight * 0.05, -bodyWidth * 0.45, bodyHeight * 0.75)
+      ctx.quadraticCurveTo(-lobe, bodyHeight * 1.05, 0, bodyHeight * 0.75)
+      ctx.quadraticCurveTo(lobe, bodyHeight * 1.05, bodyWidth * 0.45, bodyHeight * 0.75)
+      ctx.quadraticCurveTo(bodyWidth * 0.7, -bodyHeight * 0.05, bodyWidth * 0.45, -bodyHeight * 0.4)
+      ctx.quadraticCurveTo(0, -bodyHeight * 0.85, -bodyWidth * 0.45, -bodyHeight * 0.4)
+      ctx.closePath()
+      ctx.fillStyle = '#30a14e'
+      ctx.strokeStyle = '#1f7a31'
+      ctx.lineWidth = Math.max(2, r * 0.12)
+      ctx.fill()
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.moveTo(0, -bodyHeight * 1.05)
+      ctx.quadraticCurveTo(-r * 0.15, -bodyHeight * 1.35, 0, -bodyHeight * 1.45)
+      ctx.quadraticCurveTo(r * 0.2, -bodyHeight * 1.2, 0, -bodyHeight * 1.05)
+      ctx.strokeStyle = '#267238'
+      ctx.lineWidth = Math.max(2, r * 0.1)
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.moveTo(-bodyWidth * 0.1, -bodyHeight * 0.55)
+      ctx.quadraticCurveTo(-bodyWidth * 0.2, -bodyHeight * 0.25, -bodyWidth * 0.12, 0)
+      ctx.moveTo(bodyWidth * 0.1, -bodyHeight * 0.55)
+      ctx.quadraticCurveTo(bodyWidth * 0.2, -bodyHeight * 0.25, bodyWidth * 0.12, 0)
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)'
+      ctx.lineWidth = Math.max(1.2, r * 0.05)
+      ctx.stroke()
+
+      const eyeOffsetX = r * 0.5
+      const eyeOffsetY = r * 0.15
+      const eyeRadius = Math.max(2.5, r * 0.15)
+      ctx.fillStyle = '#0f172a'
+      ctx.beginPath()
+      ctx.arc(-eyeOffsetX, -eyeOffsetY, eyeRadius, 0, Math.PI * 2)
+      ctx.arc(eyeOffsetX, -eyeOffsetY, eyeRadius, 0, Math.PI * 2)
+      ctx.fill()
+
+      ctx.beginPath()
+      ctx.strokeStyle = '#0f172a'
+      ctx.lineWidth = Math.max(2, r * 0.1)
+      ctx.arc(0, r * 0.2, r * 0.65, Math.PI * 0.15, Math.PI - Math.PI * 0.15)
+      ctx.stroke()
+
+      ctx.restore()
+    }
+
     const renderScene = () => {
       const state = stateRef.current
       if (!state || !ctxRef.current) return
@@ -151,7 +224,11 @@ function App() {
       ctxRef.current.fillRect(0, floorY, state.width, state.floorHeight)
 
       state.enemies.forEach((enemy) => {
-        drawOnion(enemy)
+        if (enemy.type === 'pepper') {
+          drawPepper(enemy)
+        } else {
+          drawOnion(enemy)
+        }
       })
 
       ctxRef.current.beginPath()
@@ -266,7 +343,8 @@ function App() {
         .map((enemy) => {
           if (enemy.alive) {
             enemy.x += enemy.vx * deltaFactor
-            enemy.y = floorY - enemy.radius
+            const groundOffset = enemy.groundOffset ?? 0
+            enemy.y = floorY - enemy.radius - groundOffset
           } else if (enemy.falling) {
             enemy.vy += settings.gravity * deltaFactor
             enemy.y += enemy.vy * deltaFactor
@@ -308,7 +386,8 @@ function App() {
           state.grounded = false
 
           const combo = state.comboChain + 1
-          const points = combo * 100
+          const basePoints = enemy.type === 'pepper' ? 200 : 100
+          const points = combo * basePoints
           state.comboChain = combo
           state.score += points
           state.popups.push({
