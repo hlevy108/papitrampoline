@@ -56,13 +56,16 @@ function App() {
       stompBounceMultiplier: 1,
       enemyTypes: {
         onion: { speed: 3.2, radiusRatio: 1.1, groundLift: 0 },
-        pepper: { speed: 7.2, radiusRatio: 1.12, groundLift: 0.08 },
+        pepper: { speed: 7.2, radiusRatio: 1.12, groundLift: 0.1 },
         carrot: { speed: 2.6, radiusRatio: 1.06, groundLift: 3.0 },
+        tomato: { speed: 2.4, radiusRatio: 1.04, groundLift: 5.5 },
       },
       pepperSpawnChance: 0.35,
       pepperUnlockScore: 500,
       carrotUnlockScore: 2000,
-      carrotSpawnWeights: { onion: 0.5, carrot: 0.25, pepper: 0.25 },
+      tomatoUnlockScore: 3500,
+      carrotSpawnWeights: { onion: 0.37, carrot: 0.26, tomato: 0.13, pepper: 0.24 },
+      tomatoCarrotPairChance: 0.2,
     }
 
     const resetGameState = () => {
@@ -88,14 +91,38 @@ function App() {
       const direction = fromLeft ? 1 : -1
       const pepperEligible = state.score >= settings.pepperUnlockScore
       const carrotEligible = state.score >= settings.carrotUnlockScore
+      const tomatoEligible = state.score >= settings.tomatoUnlockScore
 
       const chooseType = () => {
         if (carrotEligible) {
-          const { onion, carrot, pepper } = settings.carrotSpawnWeights
-          const roll = Math.random()
-          if (roll < onion) return 'onion'
-          if (roll < onion + carrot) return 'carrot'
-          return pepperEligible ? 'pepper' : 'onion'
+          const weights = [
+            { type: 'onion', weight: settings.carrotSpawnWeights.onion },
+            { type: 'carrot', weight: settings.carrotSpawnWeights.carrot },
+          ]
+          if (tomatoEligible) weights.push({ type: 'tomato', weight: settings.carrotSpawnWeights.tomato })
+          if (pepperEligible) weights.push({ type: 'pepper', weight: settings.carrotSpawnWeights.pepper })
+
+          const pickType = (excludeTomato = false) => {
+            const pool = excludeTomato ? weights.filter((entry) => entry.type !== 'tomato') : weights
+            const total = pool.reduce((sum, entry) => sum + entry.weight, 0)
+            const roll = Math.random() * total
+            let cursor = 0
+            for (const entry of pool) {
+              cursor += entry.weight
+              if (roll <= cursor) return entry.type
+            }
+            return pool[pool.length - 1].type
+          }
+
+          let chosen = pickType()
+          if (chosen === 'tomato' && Math.random() < settings.tomatoCarrotPairChance) {
+            const hasCarrot = state.enemies.some((e) => e.alive && e.type === 'carrot')
+            if (!hasCarrot) {
+              chosen = pickType(true)
+            }
+          }
+
+          return chosen
         }
         if (pepperEligible && Math.random() < settings.pepperSpawnChance) return 'pepper'
         return 'onion'
@@ -287,6 +314,64 @@ function App() {
       ctx.restore()
     }
 
+    const drawTomato = (enemy) => {
+      const ctx = ctxRef.current
+      if (!ctx) return
+      ctx.save()
+      ctx.translate(enemy.x, enemy.y)
+
+      const r = enemy.radius
+      const wobble = enemy.falling ? Math.sin(enemy.y * 0.07) * 0.12 : 0
+      ctx.rotate(wobble)
+
+      const bodyWidth = r * 1.45
+      const bodyHeight = r * 1.08
+      ctx.beginPath()
+      ctx.ellipse(0, 0, bodyWidth, bodyHeight, 0, 0, Math.PI * 2)
+      ctx.fillStyle = '#ef4444'
+      ctx.strokeStyle = '#b91c1c'
+      ctx.lineWidth = Math.max(2, r * 0.11)
+      ctx.fill()
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.moveTo(0, -bodyHeight * 0.95)
+      ctx.quadraticCurveTo(-r * 0.55, -bodyHeight * 1.2, -r * 0.85, -bodyHeight * 0.92)
+      ctx.quadraticCurveTo(-r * 0.25, -bodyHeight * 1.08, 0, -bodyHeight * 1.3)
+      ctx.quadraticCurveTo(r * 0.25, -bodyHeight * 1.08, r * 0.85, -bodyHeight * 0.92)
+      ctx.quadraticCurveTo(r * 0.55, -bodyHeight * 1.2, 0, -bodyHeight * 0.95)
+      ctx.fillStyle = '#16a34a'
+      ctx.strokeStyle = '#15803d'
+      ctx.lineWidth = Math.max(2, r * 0.09)
+      ctx.fill()
+      ctx.stroke()
+
+      ctx.beginPath()
+      ctx.moveTo(0, -bodyHeight * 1.3)
+      ctx.quadraticCurveTo(-r * 0.08, -bodyHeight * 1.48, 0, -bodyHeight * 1.55)
+      ctx.quadraticCurveTo(r * 0.08, -bodyHeight * 1.42, 0, -bodyHeight * 1.3)
+      ctx.strokeStyle = '#14532d'
+      ctx.lineWidth = Math.max(2, r * 0.08)
+      ctx.stroke()
+
+      const eyeOffsetX = r * 0.55
+      const eyeOffsetY = r * 0.05
+      const eyeRadius = Math.max(2.5, r * 0.15)
+      ctx.fillStyle = '#0f172a'
+      ctx.beginPath()
+      ctx.arc(-eyeOffsetX, -eyeOffsetY, eyeRadius, 0, Math.PI * 2)
+      ctx.arc(eyeOffsetX, -eyeOffsetY, eyeRadius, 0, Math.PI * 2)
+      ctx.fill()
+
+      ctx.beginPath()
+      ctx.strokeStyle = '#0f172a'
+      ctx.lineWidth = Math.max(2, r * 0.1)
+      ctx.arc(0, r * 0.35, r * 0.6, Math.PI * 0.2, Math.PI - Math.PI * 0.2)
+      ctx.stroke()
+
+      ctx.restore()
+    }
+
     const renderScene = () => {
       const state = stateRef.current
       if (!state || !ctxRef.current) return
@@ -301,6 +386,7 @@ function App() {
 
       state.enemies.forEach((enemy) => {
         if (enemy.type === 'pepper') return drawPepper(enemy)
+        if (enemy.type === 'tomato') return drawTomato(enemy)
         if (enemy.type === 'carrot') return drawCarrot(enemy)
         return drawOnion(enemy)
       })
@@ -433,6 +519,8 @@ function App() {
             enemy.x - enemy.radius < state.width + 160,
         )
 
+      const descending = ball.y > prevBallY
+
       for (const enemy of state.enemies) {
         if (!enemy.alive) continue
 
@@ -444,11 +532,23 @@ function App() {
         const onionTop = enemy.y - enemy.radius
         const prevBallBottom = prevBallY + ball.radius
         const ballBottom = ball.y + ball.radius
-        const verticalBandDepth = enemy.type === 'carrot' ? enemy.radius * 1.2 : enemy.radius * 0.5
-        const horizontalLeniency = enemy.type === 'carrot' ? enemy.radius * 1.6 : enemy.radius * 1.05
+        const verticalBandDepth =
+          enemy.type === 'carrot'
+            ? enemy.radius * 1.2
+            : enemy.type === 'tomato'
+              ? enemy.radius * 0.9
+              : enemy.radius * 0.5
+        const horizontalLeniency =
+          enemy.type === 'carrot'
+            ? enemy.radius * 1.6
+            : enemy.type === 'tomato'
+              ? enemy.radius * 1.35
+              : enemy.type === 'pepper'
+                ? enemy.radius * 1.35
+                : enemy.radius * 1.05
         const withinTopLane = Math.abs(dx) <= horizontalLeniency
         const crossesTopBand =
-          ball.vy > 0 && prevBallBottom <= onionTop + verticalBandDepth && ballBottom >= onionTop - 2
+          descending && prevBallBottom <= onionTop + verticalBandDepth && ballBottom >= onionTop - 2
         const stomped = crossesTopBand && withinTopLane && overlapping
 
         if (stomped) {
@@ -460,7 +560,14 @@ function App() {
           state.grounded = false
 
           const combo = state.comboChain + 1
-          const basePoints = enemy.type === 'pepper' ? 130 : 100
+          const basePoints =
+            enemy.type === 'tomato'
+              ? 200
+              : enemy.type === 'carrot'
+                ? 170
+                : enemy.type === 'pepper'
+                  ? 130
+                  : 100
           const points = combo * basePoints
           state.comboChain = combo
           state.score += points
