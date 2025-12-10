@@ -24,6 +24,11 @@ function App() {
   const fetchLeaderboard = useCallback(async () => {
     setLoadingBoard(true)
     setLeaderboardError('')
+    if (!db) {
+      setLeaderboardError('Leaderboard disabled: missing Firebase config.')
+      setLoadingBoard(false)
+      return
+    }
     try {
       const leaderboardQuery = query(
         collection(db, 'leaderboard'),
@@ -82,6 +87,10 @@ function App() {
   }, [fetchLeaderboard])
 
   const handleSubmitScore = async () => {
+    if (!db) {
+      setSubmitError('Leaderboard disabled: missing Firebase config.')
+      return
+    }
     const name = playerName.trim() || 'Anonymous'
     const message = playerMessage.trim()
     const scoreValue = stateRef.current?.score ?? lastScore ?? 0
