@@ -3,13 +3,13 @@ import { getAnalytics } from 'firebase/analytics';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyC-Bs0eC_ESo1SWLQsCM9Wc-HvHaj8C9Qk',
-  authDomain: 'cardwebsite-4be73.firebaseapp.com',
-  projectId: 'cardwebsite-4be73',
-  storageBucket: 'cardwebsite-4be73.firebasestorage.app',
-  messagingSenderId: '217295192911',
-  appId: '1:217295192911:web:d31d8246cc1004dfdcbb3a',
-  measurementId: 'G-BLWDK5N98L',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
 };
 
 const app = initializeApp(firebaseConfig);
