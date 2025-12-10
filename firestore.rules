@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Leaderboard: open read, validated write
+    match /leaderboard/{docId} {
+      allow read: if true;
+      allow write: if request.time < timestamp.date(2100, 1, 1)
+        && request.resource.data.keys().hasAll(['name', 'message', 'score', 'scoreNumber', 'createdAt'])
+        && request.resource.data.name is string
+        && request.resource.data.message is string
+        && request.resource.data.score is string
+        && request.resource.data.scoreNumber is number
+        && request.resource.data.scoreNumber >= 0
+        && request.resource.data.scoreNumber <= 1000000
+        && request.resource.data.createdAt is timestamp;
+    }
+  }
+}
+
+

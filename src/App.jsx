@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
+import { addDoc, collection, getDocs, limit, orderBy, query, serverTimestamp } from 'firebase/firestore'
+import { db } from './firebaseConfig'
 
 function App() {
   const canvasRef = useRef(null)
@@ -10,6 +12,106 @@ function App() {
   const startedRef = useRef(false)
   const [started, setStarted] = useState(false)
   const [gameOver, setGameOver] = useState(false)
+  const [playerName, setPlayerName] = useState('')
+  const [playerMessage, setPlayerMessage] = useState('')
+  const [leaderboard, setLeaderboard] = useState([])
+  const [loadingBoard, setLoadingBoard] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState('')
+  const [lastScore, setLastScore] = useState(0)
+  const [leaderboardError, setLeaderboardError] = useState('')
+
+  const fetchLeaderboard = useCallback(async () => {
+    setLoadingBoard(true)
+    setLeaderboardError('')
+    try {
+      const leaderboardQuery = query(
+        collection(db, 'leaderboard'),
+        orderBy('scoreNumber', 'desc'),
+        orderBy('createdAt', 'desc'),
+        limit(10),
+      )
+      const snapshot = await getDocs(leaderboardQuery)
+      const entries = snapshot.docs.map((doc) => {
+        const data = doc.data()
+        return {
+          id: doc.id,
+          name: data.name || 'Anonymous',
+          message: data.message || '',
+          score: Number(data.scoreNumber ?? data.score ?? 0) || 0,
+          createdAt: data.createdAt?.toDate?.() ?? null,
+        }
+      })
+      setLeaderboard(entries.slice(0, 10))
+    } catch (error) {
+      console.error('Failed to load leaderboard', error)
+      if (error?.code === 'failed-precondition') {
+        // Friendly message while the composite index is building; fall back to a simpler query.
+        setLeaderboardError('Leaderboard index is building. Showing top scores without tie-breakers.')
+        try {
+          const fallbackQuery = query(
+            collection(db, 'leaderboard'),
+            orderBy('scoreNumber', 'desc'),
+            limit(10),
+          )
+          const fallbackSnapshot = await getDocs(fallbackQuery)
+          const entries = fallbackSnapshot.docs.map((doc) => {
+            const data = doc.data()
+            return {
+              id: doc.id,
+              name: data.name || 'Anonymous',
+              message: data.message || '',
+              score: Number(data.scoreNumber ?? data.score ?? 0) || 0,
+              createdAt: data.createdAt?.toDate?.() ?? null,
+            }
+          })
+          setLeaderboard(entries.slice(0, 10))
+        } catch (fallbackError) {
+          console.error('Fallback leaderboard query failed', fallbackError)
+        }
+      } else {
+        setLeaderboardError('Could not load leaderboard right now.')
+      }
+    } finally {
+      setLoadingBoard(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchLeaderboard()
+  }, [fetchLeaderboard])
+
+  const handleSubmitScore = async () => {
+    const name = playerName.trim() || 'Anonymous'
+    const message = playerMessage.trim()
+    const scoreValue = stateRef.current?.score ?? lastScore ?? 0
+    const numericScore = Number(scoreValue) || 0
+
+    if (numericScore <= 0) {
+      setSubmitError('Score must be greater than zero.')
+      return
+    }
+
+    setSubmitting(true)
+    setSubmitError('')
+    try {
+      await addDoc(collection(db, 'leaderboard'), {
+        name,
+        message,
+        score: `${numericScore}`,
+        scoreNumber: numericScore,
+        createdAt: serverTimestamp(),
+      })
+      setLastScore(numericScore)
+      if (message) setPlayerMessage('')
+      await fetchLeaderboard()
+    } catch (error) {
+      console.error('Submit score failed', error)
+      setSubmitError('Could not submit score. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -440,6 +542,7 @@ function App() {
       const state = stateRef.current
       if (!state) return
       state.gameOver = true
+    setLastScore(state.score)
       startedRef.current = false
       setStarted(false)
       setGameOver(true)
@@ -683,15 +786,67 @@ function App() {
           <p className="subtitle">
             {gameOver ? 'Game over! Try again?' : 'Press play to bounce around'}
           </p>
-          <div className="how-to">
-            <h2>How to play</h2>
-            <ul>
-              <li>Bounce on veggies to score — land on top to stay safe.</li>
-              <li>Use left/right to steer; tap up while grounded to jump.</li>
-              <li>Chain stomps without touching the ground for bonus points.</li>
-            </ul>
-          </div>
+          {!gameOver && (
+            <div className="how-to">
+              <h2>How to play</h2>
+              <ul>
+                <li>Bounce on veggies to score — land on top to stay safe.</li>
+                <li>Use left/right to steer; tap up while grounded to jump.</li>
+                <li>Chain stomps without touching the ground for bonus points.</li>
+              </ul>
+            </div>
+          )}
           <p className="controls">Arrows: left/right · Up: jump</p>
+          <div className="score-submit">
+            <h2>Submit your score</h2>
+            <p className="controls">Last score: {lastScore}</p>
+            <label className="input-label">
+              Name
+              <input
+                type="text"
+                value={playerName}
+                onChange={(e) => setPlayerName(e.target.value)}
+                placeholder="Anonymous"
+              />
+            </label>
+            <label className="input-label">
+              Message (optional)
+              <textarea
+                value={playerMessage}
+                onChange={(e) => setPlayerMessage(e.target.value)}
+                placeholder="GG!"
+                rows={2}
+              />
+            </label>
+            {submitError && <p className="error-text">{submitError}</p>}
+            <button className="play-button" onClick={handleSubmitScore} disabled={submitting}>
+              {submitting ? 'Submitting...' : 'Submit to leaderboard'}
+            </button>
+          </div>
+          <div className="leaderboard">
+            <h2>Leaderboard</h2>
+            {loadingBoard ? (
+              <p>Loading...</p>
+            ) : (
+              <>
+                {leaderboardError && <p className="error-text">{leaderboardError}</p>}
+                {leaderboard.length === 0 ? (
+                  <p>{leaderboardError ? 'Could not load scores right now.' : 'No scores yet. Be the first!'}</p>
+                ) : (
+                  <ol>
+                    {leaderboard.slice(0, 10).map((entry, index) => (
+                      <li key={entry.id ?? index}>
+                        <span className="rank">{index + 1}.</span>{' '}
+                        <span className="name">{entry.name}</span>{' '}
+                        <span className="score">{entry.score}</span>{' '}
+                        {entry.message && <span className="message">— {entry.message}</span>}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </>
+            )}
+          </div>
           <button className="play-button" onClick={startGame}>
             {gameOver ? 'Play again' : 'Play'}
           </button>
