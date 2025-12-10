@@ -683,6 +683,14 @@ function App() {
           <p className="subtitle">
             {gameOver ? 'Game over! Try again?' : 'Press play to bounce around'}
           </p>
+          <div className="how-to">
+            <h2>How to play</h2>
+            <ul>
+              <li>Bounce on veggies to score — land on top to stay safe.</li>
+              <li>Use left/right to steer; tap up while grounded to jump.</li>
+              <li>Chain stomps without touching the ground for bonus points.</li>
+            </ul>
+          </div>
           <p className="controls">Arrows: left/right · Up: jump</p>
           <button className="play-button" onClick={startGame}>
             {gameOver ? 'Play again' : 'Play'}

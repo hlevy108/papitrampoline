@@ -42,6 +42,32 @@
   letter-spacing: 0.02em;
 }
 
+.how-to {
+  background: rgba(255, 255, 255, 0.78);
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.14);
+  max-width: min(520px, 90vw);
+}
+
+.how-to h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.how-to ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  font-size: 14px;
+}
+
+.how-to li {
+  line-height: 1.35;
+}
+
 .play-button {
   margin-top: 6px;
   padding: 12px 28px;
