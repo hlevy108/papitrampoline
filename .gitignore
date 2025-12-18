@@ -11,7 +11,11 @@ node_modules
 dist
 dist-ssr
 *.local
-env.example
+
+# Vite env files (keep secrets out of git; commit `.env.example` instead)
+.env
+.env.*
+!.env.example
 
 # Editor directories and files
 .vscode/*

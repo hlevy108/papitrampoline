@@ -12,6 +12,7 @@ function App() {
   const startedRef = useRef(false)
   const [started, setStarted] = useState(false)
   const [gameOver, setGameOver] = useState(false)
+  const [activePanel, setActivePanel] = useState('submit')
   const [playerName, setPlayerName] = useState('')
   const [playerMessage, setPlayerMessage] = useState('')
   const [leaderboard, setLeaderboard] = useState([])
@@ -791,74 +792,112 @@ function App() {
       <canvas ref={canvasRef} className="game-canvas" />
       {!started && (
         <div className="overlay">
-          <h1 className="title">Papi Trampoline</h1>
-          <p className="subtitle">
-            {gameOver ? 'Game over! Try again?' : 'Press play to bounce around'}
-          </p>
-          {!gameOver && (
-            <div className="how-to">
-              <h2>How to play</h2>
-              <ul>
-                <li>Bounce on veggies to score — land on top to stay safe.</li>
-                <li>Use left/right to steer; tap up while grounded to jump.</li>
-                <li>Chain stomps without touching the ground for bonus points.</li>
-              </ul>
-            </div>
-          )}
-          <p className="controls">Arrows: left/right · Up: jump</p>
-          <div className="score-submit">
-            <h2>Submit your score</h2>
-            <p className="controls">Last score: {lastScore}</p>
-            <label className="input-label">
-              Name
-              <input
-                type="text"
-                value={playerName}
-                onChange={(e) => setPlayerName(e.target.value)}
-                placeholder="Anonymous"
-              />
-            </label>
-            <label className="input-label">
-              Message (optional)
-              <textarea
-                value={playerMessage}
-                onChange={(e) => setPlayerMessage(e.target.value)}
-                placeholder="GG!"
-                rows={2}
-              />
-            </label>
-            {submitError && <p className="error-text">{submitError}</p>}
-            <button className="play-button" onClick={handleSubmitScore} disabled={submitting}>
-              {submitting ? 'Submitting...' : 'Submit to leaderboard'}
+          <header className="overlay-header">
+            <h1 className="title">Papi Trampoline</h1>
+            {gameOver && <p className="subtitle">Game over! Try again?</p>}
+            <p className="controls">Arrows: left/right · Up: jump</p>
+          </header>
+
+          <div className="overlay-stack" aria-label="Menu">
+            <button className="button button-primary button-play" onClick={startGame}>
+              {gameOver ? 'Play again' : 'Play'}
             </button>
-          </div>
-          <div className="leaderboard">
-            <h2>Leaderboard</h2>
-            {loadingBoard ? (
-              <p>Loading...</p>
+
+            {!gameOver && (
+              <div className="card how-to">
+                <h2>How to play</h2>
+                <ul>
+                  <li>Bounce on veggies to score — land on top to stay safe.</li>
+                  <li>Use left/right to steer; tap up while grounded to jump.</li>
+                  <li>Chain stomps without touching the ground for bonus points.</li>
+                </ul>
+              </div>
+            )}
+
+            <div className="tabs" role="tablist" aria-label="Panels">
+              <button
+                type="button"
+                className={`tab ${activePanel === 'submit' ? 'is-active' : ''}`}
+                onClick={() => setActivePanel('submit')}
+                role="tab"
+                aria-selected={activePanel === 'submit'}
+              >
+                Submit
+              </button>
+              <button
+                type="button"
+                className={`tab ${activePanel === 'leaderboard' ? 'is-active' : ''}`}
+                onClick={() => setActivePanel('leaderboard')}
+                role="tab"
+                aria-selected={activePanel === 'leaderboard'}
+              >
+                Leaderboard
+              </button>
+            </div>
+
+            {activePanel === 'submit' ? (
+              <section className="card score-submit" aria-label="Submit your score">
+                <div className="card-header">
+                  <h2>Submit your score</h2>
+                  <p className="controls">Last score: {lastScore}</p>
+                </div>
+
+                <div className="form-grid">
+                  <label className="input-label">
+                    <span className="label-text">Name</span>
+                    <input
+                      type="text"
+                      value={playerName}
+                      onChange={(e) => setPlayerName(e.target.value)}
+                      placeholder="Anonymous"
+                      autoComplete="nickname"
+                    />
+                  </label>
+                  <label className="input-label">
+                    <span className="label-text">Message (optional)</span>
+                    <textarea
+                      value={playerMessage}
+                      onChange={(e) => setPlayerMessage(e.target.value)}
+                      placeholder="GG!"
+                      rows={2}
+                    />
+                  </label>
+
+                  {submitError && <p className="error-text">{submitError}</p>}
+
+                  <button className="button button-secondary button-submit" onClick={handleSubmitScore} disabled={submitting}>
+                    {submitting ? 'Submitting...' : 'Submit to leaderboard'}
+                  </button>
+                </div>
+              </section>
             ) : (
-              <>
-                {leaderboardError && <p className="error-text">{leaderboardError}</p>}
-                {leaderboard.length === 0 ? (
-                  <p>{leaderboardError ? 'Could not load scores right now.' : 'No scores yet. Be the first!'}</p>
+              <section className="card leaderboard" aria-label="Leaderboard">
+                <h2>Leaderboard</h2>
+                {loadingBoard ? (
+                  <p className="muted-text">Loading...</p>
                 ) : (
-                  <ol>
-                    {leaderboard.slice(0, 10).map((entry, index) => (
-                      <li key={entry.id ?? index}>
-                        <span className="rank">{index + 1}.</span>{' '}
-                        <span className="name">{entry.name}</span>{' '}
-                        <span className="score">{entry.score}</span>{' '}
-                        {entry.message && <span className="message">— {entry.message}</span>}
-                      </li>
-                    ))}
-                  </ol>
+                  <>
+                    {leaderboardError && <p className="error-text">{leaderboardError}</p>}
+                    {leaderboard.length === 0 ? (
+                      <p className="muted-text">
+                        {leaderboardError ? 'Could not load scores right now.' : 'No scores yet. Be the first!'}
+                      </p>
+                    ) : (
+                      <ol className="leaderboard-list">
+                        {leaderboard.slice(0, 10).map((entry, index) => (
+                          <li key={entry.id ?? index} className="leaderboard-row">
+                            <span className="name">{entry.name}</span>
+                            <span className="score">{entry.score}</span>
+                            {entry.message && <span className="message">— {entry.message}</span>}
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </>
                 )}
-              </>
+              </section>
             )}
           </div>
-          <button className="play-button" onClick={startGame}>
-            {gameOver ? 'Play again' : 'Play'}
-          </button>
         </div>
       )}
     </div>
