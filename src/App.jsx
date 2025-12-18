@@ -10,7 +10,9 @@ function App() {
   const stepRef = useRef(null)
   const animationFrameRef = useRef(null)
   const startedRef = useRef(false)
+  const pausedRef = useRef(false)
   const [started, setStarted] = useState(false)
+  const [paused, setPaused] = useState(false)
   const [gameOver, setGameOver] = useState(false)
   const [activePanel, setActivePanel] = useState('submit')
   const [playerName, setPlayerName] = useState('')
@@ -156,11 +158,16 @@ function App() {
     stateRef.current = state
 
     const settings = {
-      gravity: 0.64,
-      moveAccel: 0.6,
-      moveFriction: 0.85,
-      maxSpeed: 6,
-      jumpPower: 16,
+      // Movement tuning (scaled around ~60fps via `deltaFactor`)
+      // - gravity: higher = faster fall
+      // - moveAccel/maxSpeed: higher = snappier left/right movement
+      gravity: 0.85,
+      moveAccel: 0.8,
+      // Lower = more friction (stops sliding sooner when you release input)
+      moveFriction: 0.78,
+      maxSpeed: 8,
+      // Slightly increased to keep jump feel similar after raising gravity.
+      jumpPower: 18,
       floorColor: '#6cbf4b',
       skyColor: '#6ec5ff',
       ballColor: '#ff66b3',
@@ -168,7 +175,7 @@ function App() {
       stompBounceMultiplier: 1,
       enemyTypes: {
         onion: { speed: 3.2, radiusRatio: 1.1, groundLift: 0 },
-        pepper: { speed: 7.2, radiusRatio: 1.12, groundLift: 0.1 },
+        pepper: { speed: 7.2, radiusRatio: 1.12, groundLift: 0.22 },
         carrot: { speed: 2.6, radiusRatio: 1.06, groundLift: 3.0 },
         tomato: { speed: 2.4, radiusRatio: 1.04, groundLift: 5.5 },
       },
@@ -532,7 +539,7 @@ function App() {
       ctxRef.current.textBaseline = 'top'
       ctxRef.current.fillText(`Score: ${state.score}`, 16, 12)
       ctxRef.current.font = '16px Inter, system-ui, -apple-system, sans-serif'
-      ctxRef.current.fillText('Arrows: left/right, Up: jump', 16, 44)
+      ctxRef.current.fillText('Arrows: left/right, Up: jump · Space/Esc: pause', 16, 44)
 
       state.popups.forEach((popup) => {
         const alpha = Math.max(0, popup.remaining / popup.duration)
@@ -552,15 +559,17 @@ function App() {
       const state = stateRef.current
       if (!state) return
       state.gameOver = true
-    setLastScore(state.score)
+      setLastScore(state.score)
       startedRef.current = false
+      pausedRef.current = false
+      setPaused(false)
       setStarted(false)
       setGameOver(true)
     }
 
     const step = () => {
       const state = stateRef.current
-      if (!state || state.gameOver) return
+      if (!state || state.gameOver || pausedRef.current) return
       const { ball } = state
       const floorY = state.height - state.floorHeight
 
@@ -703,7 +712,9 @@ function App() {
       }
 
       renderScene()
-      animationFrameRef.current = requestAnimationFrame(step)
+      if (!pausedRef.current) {
+        animationFrameRef.current = requestAnimationFrame(step)
+      }
     }
     stepRef.current = step
 
@@ -727,7 +738,30 @@ function App() {
     }
 
     const handleKeyDown = (event) => {
-      if (!startedRef.current) return
+      const isPauseKey = event.key === 'Escape' || event.code === 'Space' || event.key === ' '
+      if (isPauseKey) {
+        if (startedRef.current && !state.gameOver) {
+          event.preventDefault()
+          pausedRef.current = !pausedRef.current
+          const nextPaused = pausedRef.current
+          setPaused(nextPaused)
+          if (nextPaused) {
+            state.keys.left = false
+            state.keys.right = false
+            state.lastTimestamp = null
+            if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+            animationFrameRef.current = null
+          } else {
+            state.lastTimestamp = null
+            if (stepRef.current) {
+              animationFrameRef.current = requestAnimationFrame(stepRef.current)
+            }
+          }
+        }
+        return
+      }
+
+      if (!startedRef.current || pausedRef.current) return
       if (event.key === 'ArrowLeft') state.keys.left = true
       if (event.key === 'ArrowRight') state.keys.right = true
       if (event.key === 'ArrowUp' && state.grounded) {
@@ -737,7 +771,7 @@ function App() {
     }
 
     const handleKeyUp = (event) => {
-      if (!startedRef.current) return
+      if (!startedRef.current || pausedRef.current) return
       if (event.key === 'ArrowLeft') state.keys.left = false
       if (event.key === 'ArrowRight') state.keys.right = false
     }
@@ -756,8 +790,38 @@ function App() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
       startedRef.current = false
+      pausedRef.current = false
     }
   }, [])
+
+  const pauseGame = () => {
+    if (!startedRef.current) return
+    const state = stateRef.current
+    if (!state || state.gameOver) return
+    if (pausedRef.current) return
+
+    pausedRef.current = true
+    setPaused(true)
+    state.keys.left = false
+    state.keys.right = false
+    state.lastTimestamp = null
+    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current)
+    animationFrameRef.current = null
+  }
+
+  const resumeGame = () => {
+    if (!startedRef.current) return
+    const state = stateRef.current
+    if (!state || state.gameOver) return
+    if (!pausedRef.current) return
+
+    pausedRef.current = false
+    setPaused(false)
+    state.lastTimestamp = null
+    if (stepRef.current) {
+      animationFrameRef.current = requestAnimationFrame(stepRef.current)
+    }
+  }
 
   const startGame = () => {
     if (startedRef.current) return
@@ -765,6 +829,8 @@ function App() {
     if (state) {
       const floorY = state.height - state.floorHeight
       state.gameOver = false
+      pausedRef.current = false
+      setPaused(false)
       state.spawnTimer = 0
       state.lastTimestamp = null
       state.enemies = []
@@ -790,12 +856,35 @@ function App() {
   return (
     <div className="app">
       <canvas ref={canvasRef} className="game-canvas" />
+      {started && (
+        <div className="hud" aria-label="Game controls">
+          <button
+            type="button"
+            className="button button-secondary button-hud"
+            onClick={paused ? resumeGame : pauseGame}
+            aria-pressed={paused}
+          >
+            {paused ? 'Resume' : 'Pause'}
+          </button>
+        </div>
+      )}
+      {started && paused && (
+        <div className="pause-overlay" role="dialog" aria-modal="true" aria-label="Paused">
+          <div className="pause-card">
+            <h2>Paused</h2>
+            <p className="controls">Press Space/Esc or tap Resume to continue.</p>
+            <button type="button" className="button button-primary" onClick={resumeGame}>
+              Resume
+            </button>
+          </div>
+        </div>
+      )}
       {!started && (
         <div className="overlay">
           <header className="overlay-header">
             <h1 className="title">Papi Trampoline</h1>
             {gameOver && <p className="subtitle">Game over! Try again?</p>}
-            <p className="controls">Arrows: left/right · Up: jump</p>
+            <p className="controls">Arrows: left/right · Up: jump · Space: pause</p>
           </header>
 
           <div className="overlay-stack" aria-label="Menu">
