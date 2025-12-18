@@ -151,7 +151,8 @@ function App() {
       },
       keys: { left: false, right: false },
       enemies: [],
-      spawnTimer: 0,
+      nextSpawnInMs: 0,
+      burstRemaining: 0,
       lastTimestamp: null,
       gameOver: false,
     }
@@ -171,7 +172,28 @@ function App() {
       floorColor: '#6cbf4b',
       skyColor: '#6ec5ff',
       ballColor: '#ff66b3',
-      enemySpawnMs: 2000,
+      // Spawn pacing (less regular + ramps with score until cap)
+      spawnBaseMs: 2000, // matches the previous fixed interval at score 0
+      spawnMaxPerSecond: 1.8, // max flow (slightly less intense than 2/sec)
+      maxFlowScore: 15000,
+      maxAliveEnemiesOnScreen: 8,
+      spawnJitterMultiplierMin: 0.8,
+      spawnJitterMultiplierMax: 1.25,
+      initialSpawnDelayMsMin: 350,
+      initialSpawnDelayMsMax: 1100,
+      // “Crazy moments” (kept, but much rarer)
+      // Chaos ramps up in smooth steps every N score, reaching max at chaosMaxScore.
+      chaosStepScore: 2000,
+      chaosMaxScore: 20000,
+      doubleSpawnChanceAtMax: 0.04,
+      burstChanceAtMax: 0.02,
+      burstSizeMin: 2,
+      burstSizeMax: 3,
+      burstGapMsMin: 240,
+      burstGapMsMax: 520,
+      maxSpawnsPerFrame: 6,
+      // Tomato pairing
+      tomatoMustPairWithCarrotChance: 0.3,
       stompBounceMultiplier: 1,
       enemyTypes: {
         onion: { speed: 3.2, radiusRatio: 1.1, groundLift: 0 },
@@ -183,8 +205,52 @@ function App() {
       pepperUnlockScore: 500,
       carrotUnlockScore: 2000,
       tomatoUnlockScore: 3500,
-      carrotSpawnWeights: { onion: 0.37, carrot: 0.26, tomato: 0.13, pepper: 0.24 },
+      carrotSpawnWeights: { onion: 0.37, carrot: 0.26, tomato: 0.07, pepper: 0.24 },
       tomatoCarrotPairChance: 0.2,
+    }
+
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
+    const clamp01 = (value) => clamp(value, 0, 1)
+    const lerp = (a, b, t) => a + (b - a) * t
+    const randRange = (min, max) => min + Math.random() * (max - min)
+    const randInt = (min, maxInclusive) => Math.floor(randRange(min, maxInclusive + 1))
+    const smootherstep01 = (t) => {
+      const x = clamp01(t)
+      return x * x * x * (x * (x * 6 - 15) + 10)
+    }
+
+    const getFlowT = () => {
+      const score = state.score ?? 0
+      return clamp01(score / settings.maxFlowScore)
+    }
+
+    const getChaosT = () => {
+      const score = state.score ?? 0
+      const step = Math.max(1, settings.chaosStepScore)
+      const maxSteps = Math.max(1, Math.floor(settings.chaosMaxScore / step))
+      const phase = clamp(score / step, 0, maxSteps)
+      const bucket = Math.floor(phase)
+      const frac = phase - bucket
+      // Smoothly interpolate within each 2000-score segment, then move to the next segment.
+      const stepped = (bucket + smootherstep01(frac)) / maxSteps
+      return clamp01(stepped)
+    }
+
+    const scheduleInitialSpawn = () => {
+      state.nextSpawnInMs = randRange(settings.initialSpawnDelayMsMin, settings.initialSpawnDelayMsMax)
+      state.burstRemaining = 0
+    }
+
+    const scheduleNextSpawn = () => {
+      const t = getFlowT()
+      // Smooth (non-sudden) ramp: very gentle early, gradually accelerating toward maxFlowScore.
+      const eased = smootherstep01(t)
+      const baseRatePerSec = 1000 / settings.spawnBaseMs // 0.5/sec when spawnBaseMs = 2000
+      const targetRatePerSec = lerp(baseRatePerSec, settings.spawnMaxPerSecond, eased)
+      const meanMs = 1000 / Math.max(0.05, targetRatePerSec)
+      const jittered = meanMs * randRange(settings.spawnJitterMultiplierMin, settings.spawnJitterMultiplierMax)
+      // Keep bounds sane (prevents extreme clumps or ultra-long gaps)
+      state.nextSpawnInMs = clamp(jittered, 160, 3000)
     }
 
     const resetGameState = () => {
@@ -199,20 +265,21 @@ function App() {
       state.comboChain = 0
       state.popups = []
       state.enemies = []
-      state.spawnTimer = 0
+      scheduleInitialSpawn()
       state.lastTimestamp = null
       state.gameOver = false
     }
 
-    const spawnEnemy = () => {
+    const spawnEnemy = ({ fromLeft, forceType, excludeTomato } = {}) => {
       const floorY = state.height - state.floorHeight
-      const fromLeft = Math.random() < 0.5
-      const direction = fromLeft ? 1 : -1
+      const resolvedFromLeft = typeof fromLeft === 'boolean' ? fromLeft : Math.random() < 0.5
+      const direction = resolvedFromLeft ? 1 : -1
       const pepperEligible = state.score >= settings.pepperUnlockScore
       const carrotEligible = state.score >= settings.carrotUnlockScore
       const tomatoEligible = state.score >= settings.tomatoUnlockScore
 
       const chooseType = () => {
+        if (forceType) return forceType
         if (carrotEligible) {
           const weights = [
             { type: 'onion', weight: settings.carrotSpawnWeights.onion },
@@ -233,13 +300,7 @@ function App() {
             return pool[pool.length - 1].type
           }
 
-          let chosen = pickType()
-          if (chosen === 'tomato' && Math.random() < settings.tomatoCarrotPairChance) {
-            const hasCarrot = state.enemies.some((e) => e.alive && e.type === 'carrot')
-            if (!hasCarrot) {
-              chosen = pickType(true)
-            }
-          }
+          let chosen = pickType(excludeTomato)
 
           return chosen
         }
@@ -250,7 +311,7 @@ function App() {
       const type = chooseType()
       const spec = settings.enemyTypes[type] ?? settings.enemyTypes.onion
       const radius = state.ball.radius * spec.radiusRatio
-      const x = fromLeft ? -radius * 1.2 : state.width + radius * 1.2
+      const x = resolvedFromLeft ? -radius * 1.2 : state.width + radius * 1.2
       const groundOffset = spec.groundLift * radius
       state.enemies.push({
         type,
@@ -263,6 +324,7 @@ function App() {
         falling: false,
         groundOffset,
       })
+      return { fromLeft: resolvedFromLeft, type, index: state.enemies.length - 1 }
     }
 
     const drawOnion = (enemy) => {
@@ -615,10 +677,87 @@ function App() {
         }))
         .filter((popup) => popup.remaining > 0)
 
-      state.spawnTimer += deltaMs
-      if (state.spawnTimer >= settings.enemySpawnMs) {
-        spawnEnemy()
-        state.spawnTimer = 0
+      // Spawn scheduler: irregular timing + ramps with score (capped), with bursts + occasional opposite-side doubles.
+      state.nextSpawnInMs -= deltaMs
+      let spawnsThisFrame = 0
+      let aliveEnemiesThisFrame = state.enemies.reduce((count, enemy) => count + (enemy.alive ? 1 : 0), 0)
+      while (state.nextSpawnInMs <= 0 && spawnsThisFrame < settings.maxSpawnsPerFrame) {
+        if (aliveEnemiesThisFrame >= settings.maxAliveEnemiesOnScreen) {
+          // At cap: don't spawn more, but check again soon so difficulty resumes naturally.
+          state.nextSpawnInMs = randRange(120, 220)
+          break
+        }
+        const flowT = getFlowT()
+        const flowEased = smootherstep01(flowT)
+        const chaosT = getChaosT()
+        // getChaosT() is already smoothed per-step; no need to ease again.
+        const chaosEased = chaosT
+
+        const first = spawnEnemy()
+        spawnsThisFrame += 1
+        aliveEnemiesThisFrame += 1
+
+        // Tomato rule: ~30% of tomato spawns must be paired with a carrot.
+        // If we can't fit the pair (cap/frame), reroll the tomato into a non-tomato instead.
+        if (first.type === 'tomato' && Math.random() < settings.tomatoMustPairWithCarrotChance) {
+          const canAddOneMore =
+            spawnsThisFrame < settings.maxSpawnsPerFrame && aliveEnemiesThisFrame < settings.maxAliveEnemiesOnScreen
+          if (canAddOneMore) {
+            spawnEnemy({ fromLeft: !first.fromLeft, forceType: 'carrot' })
+            spawnsThisFrame += 1
+            aliveEnemiesThisFrame += 1
+          } else {
+            // Remove the tomato we just spawned and replace it with a non-tomato enemy.
+            state.enemies.pop()
+            spawnsThisFrame -= 1
+            aliveEnemiesThisFrame -= 1
+            const replacement = spawnEnemy({ fromLeft: first.fromLeft, excludeTomato: true })
+            spawnsThisFrame += 1
+            aliveEnemiesThisFrame += 1
+            // If replacement is tomato anyway (shouldn't happen), we just accept it.
+            void replacement
+          }
+        }
+
+        if (state.burstRemaining > 0) {
+          state.burstRemaining -= 1
+          state.nextSpawnInMs = randRange(settings.burstGapMsMin, settings.burstGapMsMax)
+          continue
+        }
+
+        // Special events (bursts/doubles) ramp in later than the base flow, and do not stack.
+        // Tomatoes should not trigger the random double-spawn event (tomato+carrot pairing is handled above).
+        // Make doubles/bursts ramp in very gradually and keep doubles notably rarer at max.
+        const chaosForDoubles = Math.pow(chaosEased, 1.6)
+        const chaosForBursts = Math.pow(chaosEased, 1.25)
+        const doubleChance = first.type === 'tomato' ? 0 : settings.doubleSpawnChanceAtMax * chaosForDoubles
+        const burstChance = settings.burstChanceAtMax * chaosForBursts
+        const specialRoll = Math.random()
+
+        if (specialRoll < burstChance) {
+          const burstSize = randInt(settings.burstSizeMin, settings.burstSizeMax)
+          state.burstRemaining = Math.max(0, burstSize - 1)
+          state.nextSpawnInMs = randRange(settings.burstGapMsMin, settings.burstGapMsMax)
+          continue
+        }
+
+        if (
+          specialRoll < burstChance + doubleChance &&
+          spawnsThisFrame < settings.maxSpawnsPerFrame &&
+          aliveEnemiesThisFrame < settings.maxAliveEnemiesOnScreen
+        ) {
+          // Tomatoes should never be part of the random double-spawn event.
+          spawnEnemy({ fromLeft: !first.fromLeft, excludeTomato: true })
+          spawnsThisFrame += 1
+          aliveEnemiesThisFrame += 1
+        }
+
+        scheduleNextSpawn()
+      }
+
+      // Safety: if the tab lags heavily, don't try to “catch up” with infinite spawns.
+      if (spawnsThisFrame >= settings.maxSpawnsPerFrame && state.nextSpawnInMs <= 0) {
+        scheduleNextSpawn()
       }
 
       state.enemies = state.enemies
@@ -831,7 +970,9 @@ function App() {
       state.gameOver = false
       pausedRef.current = false
       setPaused(false)
-      state.spawnTimer = 0
+      // Initial spawn is intentionally jittered so the game doesn't start on a fixed beat.
+      state.nextSpawnInMs = 350 + Math.random() * (1100 - 350)
+      state.burstRemaining = 0
       state.lastTimestamp = null
       state.enemies = []
       state.ball.x = state.width / 2
